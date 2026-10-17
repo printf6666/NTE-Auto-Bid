@@ -161,8 +161,8 @@ class Flow:
             if self.skip_appeared():
                 self.settlement()
                 return
-        # 第1/3回合读取当前估价
-        if round_number in (1, 3):
+        # 第1/3/5回合读取当前估价
+        if round_number in (1, 3, 5):
             value = self.read_estimate()
             if value is not None:
                 state.estimate = value
@@ -238,19 +238,21 @@ class Flow:
         skip_steps.append({"wait": settle_wait})
         self.runner.run("结算-跳过", skip_steps)
         # 结算画面读最终估价（文本框位置/格式与回合中相同）
-        threshold = int(self.bid_config.get("high_threshold", 5000000))
+        threshold = int(self.bid_config.get("sell_red_threshold", 1800000))
         final_estimate = self.read_estimate()
         if final_estimate is not None:
-            over_high = final_estimate > threshold
-            log.info("[结算] 最终估价 %d，阈值 %d → %s",
-                     final_estimate, threshold, "超500万" if over_high else "未超500万")
+            over_threshold = final_estimate > threshold
+            log.info("[结算] 最终估价 %d，红键阈值 %d → %s",
+                     final_estimate, threshold, "不点红键" if over_threshold else "点红键")
         else:
-            over_high = state.high_i is not None
-            log.info("[结算] 最终估价识别失败，回退本局 high_i=%s → %s",
-                     state.high_i, "超500万" if over_high else "未超500万")
+            # OCR 失败回退：用本局最近一次估价判断
+            fallback = state.estimate
+            over_threshold = (fallback is not None and fallback > threshold) or state.high_i is not None
+            log.info("[结算] 最终估价识别失败，回退估价=%s high_i=%s → %s",
+                     fallback, state.high_i, "不点红键" if over_threshold else "点红键")
         steps = []
-        if not over_high:
-            # 最终估价≤500万：出售前先点红色按键(2448,1156)
+        if not over_threshold:
+            # 最终估价≤180万：出售前先点红色按键(2448,1156)
             red_steps = self.actions.get("出售红色按键")
             if not red_steps:
                 self.runner.fail("config.actions.出售红色按键 坐标缺失")
