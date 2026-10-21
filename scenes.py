@@ -6,6 +6,9 @@
   awaiting  等 OCR 识别到「竞拍第N回合」（超时重试点开始匹配，超过次数致命退出）
   playing   竞拍中：检测跳过（结算）与回合变化，回合变化触发当回合动作
   cooldown  结算完成，等待 cooldown_wait 后购买道具（第2局起）→ 开始匹配
+
+worker 不为空时（GUI 运行）：除日志外还会上报阶段/回合/结算进度，并在动作前插入
+可中断的暂停点。
 """
 import logging
 import random
@@ -35,16 +38,33 @@ def parse_estimate(text):
 
 
 class Flow:
-    def __init__(self, config, state, ocr, runner, capturer):
+    def __init__(self, config, state, ocr, runner, capturer, control=None, worker=None):
         self.config = config
         self.state = state
         self.ocr = ocr
         self.runner = runner
         self.capturer = capturer
+        self.control = control
+        self.worker = worker
         self.regions = config["regions"]
         self.actions = config["actions"]
         self.loop = config["loop"]
         self.bid_config = config["bid"]
+
+    # ---------- 暂停点与进度上报 ----------
+    def checkpoint(self):
+        if self.worker is not None:
+            self.worker.check_interrupt()
+
+    def report(self, method, *args):
+        if self.worker is not None:
+            getattr(self.worker, method)(*args)
+
+    def notify_phase(self):
+        if self.worker is not None:
+            if self.control is not None:
+                self.control.drain()  # 丢弃过期的停止/继续命令，避免误触发
+            self.worker.on_phase(self.state.phase, self.state)
 
     # ---------- OCR 辅助 ----------
     def read_round(self, image):
@@ -59,6 +79,7 @@ class Flow:
         times = int(self.loop.get("estimate_retry_times", 5))
         delay = float(self.loop.get("estimate_retry_delay", 1.0))
         for attempt in range(1, times + 1):
+            self.checkpoint()
             image = self.capturer.grab()
             text = self.ocr.read(image, self.regions["estimate"])
             value = parse_estimate(text)
@@ -67,7 +88,12 @@ class Flow:
                 return value
             log.info("[估价] 识别失败 %r（第 %d/%d 次）", text, attempt, times)
             if attempt < times:
-                time.sleep(delay)
+                if self.runner.dry_run:
+                    continue
+                if self.worker is not None:
+                    self.worker.sleep(delay)
+                else:
+                    time.sleep(delay)
         return None
 
     # ---------- 主入口 ----------
@@ -87,9 +113,11 @@ class Flow:
         wait = float(self.loop.get("startup_wait", 10.0))
         log.info("[启动] 等待 %.0f 秒后点开始匹配（首局不购买道具）", wait)
         self.runner.wait(wait, "启动")
+        self.checkpoint()
         self.start_match()
         self.state.phase = "awaiting"
         self.state.match_started_at = time.time()
+        self.notify_phase()
 
     def start_match(self):
         steps = self.actions.get("开始匹配")
@@ -107,6 +135,7 @@ class Flow:
             if state.entry_failures > max_retries:
                 self.runner.fail(f"开始匹配后 {timeout:.0f} 秒未识别到竞拍回合，重试 {max_retries} 次仍失败")
             log.info("[等待竞拍] 超时，重试点开始匹配（%d/%d）", state.entry_failures, max_retries)
+            self.checkpoint()
             self.start_match()
             state.match_started_at = time.time()
             return
@@ -116,6 +145,7 @@ class Flow:
         state.phase = "playing"
         if round_number != 1:
             log.info("[竞拍] 未识别到第1回合，从第 %d 回合开始处理", round_number)
+        self.notify_phase()
         self.handle_round(round_number)
 
     # ---------- 竞拍中 ----------
@@ -143,9 +173,11 @@ class Flow:
     def handle_round(self, round_number):
         state = self.state
         state.current_round = round_number
+        self.report("on_round", round_number, state)
         wait = float(self.loop.get("round_wait", 10.0))
         log.info("[回合] 第 %d 回合开始，等待 %.0f 秒", round_number, wait)
         self.runner.wait(wait, f"第{round_number}回合")
+        self.checkpoint()
         if self.skip_appeared():  # 等待期间有人秒掉
             self.settlement()
             return
@@ -158,6 +190,7 @@ class Flow:
             self.runner.run("使用仪器", steps)
             state.instrument_used = True
             self.runner.wait(float(self.loop.get("item_wait", 10.0)), "使用仪器后")
+            self.checkpoint()
             if self.skip_appeared():
                 self.settlement()
                 return
@@ -166,15 +199,16 @@ class Flow:
             value = self.read_estimate()
             if value is not None:
                 state.estimate = value
-                threshold = int(self.bid_config.get("high_threshold", 5000000))
-                if value > threshold and state.high_i is None:
+                if value > bid_mod.HIGH_THRESHOLD and state.high_i is None:
                     state.high_i = round_number
                     log.info("[高价] 第 %d 回合估价 %d > %d，高价公式本局永久生效",
-                             round_number, value, threshold)
+                             round_number, value, bid_mod.HIGH_THRESHOLD)
+        self.checkpoint()
         bid_value = self.compute_bid(round_number)
         if bid_value is None:
             log.info("[出价] 第 %d 回合无有效估价，本回合不出价", round_number)
             return
+        self.report("on_bid", round_number, bid_value, state)
         self.submit_bid(round_number, bid_value)
 
     def compute_bid(self, round_number):
@@ -217,7 +251,7 @@ class Flow:
             self.runner.fail("config.actions.确认出价 坐标缺失")
         steps.extend(self.actions["确认出价"])
         # 出价超过阈值（不含等于）时游戏弹「本次出价过高是否继续」二次确认
-        threshold = int(self.bid_config.get("confirm_popup_threshold", 2000000))
+        threshold = bid_mod.CONFIRM_POPUP_THRESHOLD
         if bid_value > threshold:
             popup_steps = self.actions.get("出价过高继续")
             if not popup_steps:
@@ -232,11 +266,13 @@ class Flow:
         settle_wait = float(self.loop.get("settle_wait", 3.0))
         sell_wait = float(self.loop.get("sell_wait", 2.0))
         log.info("[结算] 竞拍结束（第 %d 局）", state.cycle)
+        self.checkpoint()
         skip_steps = list(self.actions.get("跳过") or [])
         if not skip_steps:
             self.runner.fail("config.actions.跳过 坐标缺失")
         skip_steps.append({"wait": settle_wait})
         self.runner.run("结算-跳过", skip_steps)
+        self.checkpoint()
         # 结算画面读最终估价（文本框位置/格式与回合中相同）
         threshold = int(self.bid_config.get("sell_red_threshold", 1800000))
         final_estimate = self.read_estimate()
@@ -250,6 +286,7 @@ class Flow:
             over_threshold = (fallback is not None and fallback > threshold) or state.high_i is not None
             log.info("[结算] 最终估价识别失败，回退估价=%s high_i=%s → %s",
                      fallback, state.high_i, "不点红键" if over_threshold else "点红键")
+        self.report("on_settle", over_threshold, state)
         steps = []
         if not over_threshold:
             # 最终估价≤180万：出售前先点红色按键(2448,1156)
@@ -279,17 +316,21 @@ class Flow:
         state.phase = "cooldown"
         state.cooldown_until = time.time() + cooldown_wait
         log.info("[结算] 完成，等待 %.0f 秒后进入下一局", cooldown_wait)
+        self.notify_phase()
 
     def on_cooldown(self):
         if time.time() < self.state.cooldown_until:
             return
+        self.checkpoint()
         # 第2局起每局先补道具（首局在 boot 阶段直接匹配）
         buy_steps = self.actions.get("购买道具")
         if not buy_steps:
             self.runner.fail("config.actions.购买道具 坐标缺失")
         log.info("[主界面] 购买道具")
         self.runner.run("购买道具", buy_steps)
+        self.checkpoint()
         self.state.entry_failures = 0
         self.start_match()
         self.state.phase = "awaiting"
         self.state.match_started_at = time.time()
+        self.notify_phase()

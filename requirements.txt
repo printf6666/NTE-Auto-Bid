@@ -2,3 +2,4 @@ rapidocr>=3.9.0
 mss>=10.0.0
 numpy
 opencv-python
+PyQt5>=5.15.0

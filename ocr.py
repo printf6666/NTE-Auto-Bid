@@ -11,7 +11,7 @@ class OCREngine:
     def __init__(self, config):
         logging.getLogger("RapidOCR").setLevel(logging.ERROR)
         from rapidocr import RapidOCR
-        # log_level=error：关闭模型加载/空检测等 INFO、WARNING 噪声（保证静默）
+        # log_level=error：关闭模型加载/空检测等 INFO、WARNING 噪声，避免刷屏界面日志
         self.engine = RapidOCR(params={"Global.log_level": "error"})
         ocr_config = config.get("ocr", {})
         self.upscale_height = int(ocr_config.get("upscale_height", 40))
