@@ -178,10 +178,10 @@ def main():
         def __init__(self):
             self.worker = None
 
-        def start(self):
+        def start(self, mode="normal"):
             if self.worker is not None and self.worker.is_alive():
                 return  # 已在运行
-            self.worker = BotWorker(control, holder, stats)
+            self.worker = BotWorker(control, holder, stats, mode=mode)
             self.worker.start()
 
         def stop(self):

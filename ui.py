@@ -5,13 +5,13 @@
 │ 挂机任务  ×                                             | 运行日志    │
 │ ┌──────────────────────────────────────────┐ | （可折叠）  │
 │ │ 收藏组合标题 + 状态                [编辑] │ |            │
-│ │  今日局数 / 今日收益 / 每日采集次数        │ |            │
+│ │  今日局数 / 今日拍下 / 采集日期            │ |            │
 │ │  采集日期                                  │ |            │
 │ │  ── 分割线 ──                              │ |            │
 │ │  运行流程面板（内嵌采集配置）              │ |            │
 │ │  [参数配置] [高级设置] [空跑] [步进]       │ |            │
 │ └──────────────────────────────────────────┘ |            │
-│ ─── 统计：局数 / 回合 / 出价 / 连续运行 ───    │            │
+│ ─── 统计：今日局数 / 今日拍下 ───              │            │
 │                              [▶ 开始任务]     │            │
 └──────────────────────────────────────────────┴──────────────────┘
 """
@@ -179,9 +179,7 @@ class TaskCard(QFrame):
 
         self.tiles = {
             "cycles": StatTile("flag", "今日局数", "0"),
-            "rounds": StatTile("target", "今日回合", "0"),
-            "bids": StatTile("coin", "今日出价", "0"),
-            "captures": StatTile("crosshair", "采集次数", "0"),
+            "wins": StatTile("coin", "今日拍下", "0"),
         }
         tiles_box = QVBoxLayout()
         tiles_box.setSpacing(8)
@@ -195,7 +193,7 @@ class TaskCard(QFrame):
         outer.addLayout(self._build_footer())
 
     def _build_status_board(self):
-        """模式选择：普通 / 巨物 / 至尊（后两种暂未开放）"""
+        """模式选择：普通 / 巨物 / 至尊（三种均已实现）"""
         board = QFrame()
         board.setObjectName("CardBody")
         board.setMinimumHeight(266)
@@ -208,14 +206,16 @@ class TaskCard(QFrame):
         self._mode = "normal"
         specs = [
             ("normal", "普通模式", "flag",
-             "角色搭配黑羽或小吱，第一回合使用超级鉴定仪器随机展示 6 件藏品。", True),
+             "第一回合使用超级鉴定仪器随机展示 6 件藏品, 估价 > 512万则本局切换高价公式。", True),
             ("giant", "巨物模式", "target",
-             "角色搭配黑羽或小吱，第一回合使用超级鉴定仪器展示 6 件藏品，"
-             "第二回合使用特殊鉴定仪器展示轮廓最大的一件藏品。", False),
+             "第一回合使用超级鉴定仪器展示 6 件藏品，"
+             "第二回合使用特殊鉴定仪器展示轮廓最大的一件藏品，"
+             "估价 > 512万则本局切换高价公式。", True),
             ("supreme", "至尊模式", "shield",
-             "角色搭配黑羽或小吱，第一回合使用超级鉴定仪器展示 6 件藏品，"
+             "第一回合使用超级鉴定仪器展示 6 件藏品，"
              "第二回合使用九格均价仪器显示九格藏品的平均价值，"
-             "第三回合使用至尊鉴定仪器展示信息完全未知且品质最高的一件藏品。", False),
+             "均价 > 30万则本局切换高价公式，"
+             "第三回合使用至尊鉴定仪器展示信息完全未知且品质最高的一件藏品。", True),
         ]
         for key, title, icon_name, desc, enabled in specs:
             card = ModeCard(key, title, icon_name, desc, enabled)
@@ -321,8 +321,7 @@ class TaskCard(QFrame):
 
     def set_stats(self, data):
         self.tiles["cycles"].set_value(f"{data.get('cycles', 0):,}")
-        self.tiles["rounds"].set_value(f"{data.get('rounds', 0):,}")
-        self.tiles["bids"].set_value(f"{data.get('bids', 0):,}")
+        self.tiles["wins"].set_value(f"{data.get('wins', 0):,}")
 
     def refresh_board(self, state=None):
         """刷新状态胶囊的提示信息（出价参数）"""
@@ -333,12 +332,6 @@ class TaskCard(QFrame):
             f"出价倍率 {bid_config.get('multiplier', 1.3):g} · "
             f"高价阈值 {HIGH_THRESHOLD // 10000} 万（固定）· "
             f"二次确认 {CONFIRM_POPUP_THRESHOLD // 10000} 万（固定）")
-
-    def set_captures(self, count):
-        self._captures = count
-        self.tiles["captures"].set_value(f"{count:,}")
-        date = self.date_field.value()
-        self.settings.set_capture_count(count, f"{date.year}-{date.month:02d}-{date.day:02d}")
 
     def set_timer(self, running):
         if running:
@@ -365,7 +358,7 @@ class TaskCard(QFrame):
             QTimer.singleShot(1500, lambda: self.task_btn.setEnabled(True))
         else:
             self.reset_timer()
-            self.runtime.start()
+            self.runtime.start(self.mode)
 
 
 class MainWindow(QMainWindow):
@@ -403,10 +396,6 @@ class MainWindow(QMainWindow):
         records = self.log_store.recent()
         if records:
             self.log_panel.restore(records)
-            last_day = self.log_store.last_day()
-            self.log_panel.append(
-                time.strftime("%H:%M:%S"),
-                f"[日志] 已载入 {len(records)} 条历史记录（最近 {last_day}），本次继续追加")
 
     def attach_runtime(self, runtime):
         """runtime 提供 start()/stop()/shutdown()，由 app.py 注入"""

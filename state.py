@@ -10,6 +10,8 @@ class State:
         self.current_round = None  # 本局已处理到的回合（None=未开始）
         self.estimate = None       # 最近一次读到的估价
         self.high_i = None         # 估价>500万触发的回合，本局永久生效
+        self.high_bonus = 0        # 高价公式累计随机加价（每回合 +randint(min,max) 万）
+        self.high_draws = 0        # 高价公式已抽取加价的回合数
         self.instrument_used = False
         self.bid_bonus = 0       # 本局累计随机加价（每轮 +randint(min,max)*10000）
         self.match_started_at = None
@@ -21,5 +23,7 @@ class State:
         self.current_round = None
         self.estimate = None
         self.high_i = None
+        self.high_bonus = 0
+        self.high_draws = 0
         self.instrument_used = False
         self.bid_bonus = 0

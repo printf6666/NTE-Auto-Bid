@@ -17,15 +17,18 @@ class OCREngine:
         self.upscale_height = int(ocr_config.get("upscale_height", 40))
         self.upscale_scale = int(ocr_config.get("upscale_scale", 3))
 
-    def read(self, image, region):
-        """识别矩形区域 [[x1,y1],[x2,y2]] 内的全部文本，返回拼接字符串"""
-        (x1, y1), (x2, y2) = region
-        height, width = image.shape[:2]
-        x1, y1 = max(int(x1), 0), max(int(y1), 0)
-        x2, y2 = min(int(x2), width), min(int(y2), height)
-        if x2 <= x1 or y2 <= y1:
-            return ""
-        crop = image[y1:y2, x1:x2]
+    def read(self, image, region=None):
+        """识别区域 [[x1,y1],[x2,y2]] 内的全部文本并拼接；region=None 时识别整图"""
+        if region is not None:
+            (x1, y1), (x2, y2) = region
+            height, width = image.shape[:2]
+            x1, y1 = max(int(x1), 0), max(int(y1), 0)
+            x2, y2 = min(int(x2), width), min(int(y2), height)
+            if x2 <= x1 or y2 <= y1:
+                return ""
+            crop = image[y1:y2, x1:x2]
+        else:
+            crop = image
         if crop.shape[0] < self.upscale_height:
             crop = cv2.resize(crop, None, fx=self.upscale_scale, fy=self.upscale_scale,
                               interpolation=cv2.INTER_CUBIC)

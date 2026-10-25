@@ -35,9 +35,9 @@ class SettingsPage(QWidget):
         self._loading = False
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 8, 0, 8)
+        # 底边距 14：与挂机任务页「开始任务」按钮底边（任务卡 14px 底边距）对齐
+        outer.setContentsMargins(0, 8, 0, 14)
         outer.setSpacing(8)
-        outer.addWidget(self._build_intro())
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -49,6 +49,8 @@ class SettingsPage(QWidget):
         column = QVBoxLayout(body)
         column.setContentsMargins(0, 0, 4, 0)
         column.setSpacing(10)
+        # 说明卡放滚动区内：内容超高时由滚动区吸收，底部按钮条不会再被窗口底边裁掉
+        column.addWidget(self._build_intro())
         column.addWidget(self._build_capture())
         column.addWidget(self._build_bid())
         column.addWidget(self._build_loop())
@@ -175,7 +177,7 @@ class SettingsPage(QWidget):
         self.multiplier_field = FloatField(1.3)
         self.bonus_min_field = NumberField(1, 70)
         self.bonus_max_field = NumberField(5, 70)
-        self.sell_threshold_field = NumberField(1800000, 130)
+        self.sell_threshold_field = NumberField(5120000, 130)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(16)
@@ -300,7 +302,7 @@ class SettingsPage(QWidget):
         self.interval_field.set_value(loop.get("interval", 1.0))
         self.bonus_min_field.set_value(bid.get("bonus_wan_min", 1))
         self.bonus_max_field.set_value(bid.get("bonus_wan_max", 5))
-        self.sell_threshold_field.set_value(bid.get("sell_red_threshold", 1800000))
+        self.sell_threshold_field.set_value(bid.get("sell_red_threshold", 5120000))
 
         debug = config.get("debug", {})
         self.dry_run_box.setChecked(bool(debug.get("dry_run", False)))
@@ -326,7 +328,7 @@ class SettingsPage(QWidget):
             "multiplier": self.multiplier_field.value(1.3),
             "bonus_wan_min": self.bonus_min_field.value(1),
             "bonus_wan_max": self.bonus_max_field.value(5),
-            "sell_red_threshold": self.sell_threshold_field.value(1800000),
+            "sell_red_threshold": self.sell_threshold_field.value(5120000),
             "width": self.width_field.value(2560),
             "height": self.height_field.value(1600),
             "title": self.title_field.text().strip(),

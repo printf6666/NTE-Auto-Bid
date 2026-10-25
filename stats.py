@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""运行统计：局数 / 回合 / 出价次数，存盘到 stats.json（跨自然日自动清零）"""
+"""运行统计：局数 / 拍下数，存盘到 stats.json（跨自然日自动清零）"""
 import json
 import threading
 import time
 
-_KEYS = ("cycles", "rounds", "bids")
+_KEYS = ("cycles", "wins")
 
 
 class Stats:
     def __init__(self, path):
         self.path = path
         self._lock = threading.Lock()
-        self.data = {"cycles": 0, "rounds": 0, "bids": 0, "day": ""}
+        self.data = {"cycles": 0, "wins": 0, "day": ""}
         self._load()
 
     @staticmethod

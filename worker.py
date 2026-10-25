@@ -35,13 +35,14 @@ class ThreadLogHandler(logging.Handler):
 
 
 class BotWorker(threading.Thread):
-    def __init__(self, control, holder, stats: Stats, logger_name="yihuan"):
+    def __init__(self, control, holder, stats: Stats, logger_name="yihuan", mode="normal"):
         super().__init__(daemon=True)
         self.control = control
         self.holder = holder
         self.stats = stats
         self.name = "BotWorker"
         self.log = logging.getLogger(logger_name)
+        self._mode = mode or "normal"
         self._stop_event = threading.Event()
         self._step_event = threading.Event()
         self._step_mode = False
@@ -101,20 +102,19 @@ class BotWorker(threading.Thread):
 
     def on_round(self, round_number, state):
         self._cycle = state.cycle
-        self.stats.add("rounds")
-        self.push_stats()
         self.set_stage("竞拍中", f"第 {state.cycle} 局 · 第 {round_number} 回合", round_number)
 
     def on_bid(self, round_number, bid_value, state):
-        self.stats.add("bids")
-        self.push_stats()
         self.set_stage("出价", f"第 {state.cycle} 局 · 第 {round_number} 回合 · {bid_value / 10000:.0f}万",
                        round_number)
 
-    def on_settle(self, over_threshold, state):
+    def on_settle(self, won, state):
+        self._cycle = state.cycle
         self.stats.add("cycles")
+        if won:
+            self.stats.add("wins")
         self.push_stats()
-        self.set_stage("结算", f"第 {state.cycle} 局完成" + ("（高价保留）" if over_threshold else ""),
+        self.set_stage("结算", f"第 {state.cycle} 局完成" + ("，本局拍下" if won else "，他人拍下"),
                        state.current_round)
 
     # 协作式中断 --------------------------------------------------------
@@ -228,9 +228,12 @@ class BotWorker(threading.Thread):
             self._capturer = ScreenCapturer()
             state = State()
             self._flow = Flow(self.config, state, ocr_engine, self._runner,
-                              self._capturer, control=self.control, worker=self)
-            mode = "空跑" if self._runner.dry_run else "步进" if self._runner.step else "自动"
-            self.log.info("异环自动竞拍已启动，模式: %s", mode)
+                              self._capturer, control=self.control, worker=self,
+                              mode=self._mode)
+            run_mode = "空跑" if self._runner.dry_run else "步进" if self._runner.step else "自动"
+            flow_mode = {"normal": "普通", "giant": "巨物", "supreme": "至尊"}.get(
+                self._mode, self._mode)
+            self.log.info("异环自动竞拍已启动，模式: %s · %s模式", run_mode, flow_mode)
             started = True
             # 先把 boot 相位推给界面，避免启动等待期间阶段栏是空的
             self._cycle = state.cycle
@@ -238,8 +241,7 @@ class BotWorker(threading.Thread):
 
             while not self._stop_event.is_set():
                 begin = time.monotonic()
-                image = self._capturer.grab()
-                self._flow.tick(image)
+                self._flow.tick()  # 各阶段按需截取识别框小区域，冷却等待期零截图
                 self.check_interrupt()
                 elapsed = time.monotonic() - begin
                 interval = float(self.config["loop"].get("interval", 1.0))
