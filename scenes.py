@@ -16,7 +16,9 @@ worker 不为空时（GUI 运行）：除日志外还会上报阶段/回合/结�
 mode：normal 普通模式 | giant 巨物模式（第2回合用特殊鉴定仪器再读一次估价，
 >512万则本局切换高价公式）| supreme 至尊模式（第2回合用九格均价仪器，坐标同超级
 鉴定仪器，用后等 avg_wait 秒在 regions.avg_check 读九格均价，严格>30万则本局切换
-高价公式；第3回合用至尊鉴定仪器，坐标同特殊鉴定仪器；其余与普通模式一致）。
+高价公式；第3回合用至尊鉴定仪器，坐标同特殊鉴定仪器）| avg2 存储盘模式（第1回合
+大型鉴定仪器与第2回合二格均价仪器坐标均同超级鉴定仪器，第2回合读 avg_check 二格
+均价，严格>30万切高价公式；其余与普通模式一致）。
 """
 import logging
 import random
@@ -256,11 +258,14 @@ class Flow:
 
     # ---------- 模式专属回合动作 ----------
     def apply_mode_round(self, round_number):
-        """巨物/至尊模式在第2/3回合的额外道具与检查；返回 False 表示本局已进结算"""
+        """模式专属回合动作；返回 False 表示本局已进结算"""
         if self.mode == "giant" and round_number == 2:
             return self._giant_round(round_number)
         if self.mode == "supreme" and round_number in (2, 3):
             return self._supreme_round(round_number)
+        if self.mode == "avg2" and round_number == 2:
+            return self._avg_price_round(round_number, "使用仪器",
+                                         "存储盘模式：使用二格均价仪器", "二格均价")
         return True
 
     def _use_item(self, action_key, label, wait_key, wait_default):
@@ -280,7 +285,7 @@ class Flow:
         return True
 
     def _giant_round(self, round_number):
-        """巨物：第2回合用特殊鉴定仪器展示轮廓最大的藏品，再读一次估价"""
+        """巨物：第2回合用特殊鉴定仪器展示所占格数最多的藏品，再读一次估价"""
         self._use_item("使用特殊仪器", "巨物模式：使用特殊鉴定仪器", "item_wait", 10.0)
         if not self._skip_or_alive():
             return False
@@ -294,28 +299,33 @@ class Flow:
                          round_number, value, bid_mod.HIGH_THRESHOLD)
         return True
 
+    def _avg_price_round(self, round_number, action_key, label, price_label):
+        """均价类仪器回合（坐标同超级鉴定仪器）：用后等 avg_wait 秒读 avg_check 均价，
+        严格大于 avg_switch_threshold 则本局切换高价公式；均价不写入 state.estimate"""
+        self._use_item(action_key, label, "avg_wait", 4.0)
+        if not self._skip_or_alive():
+            return False
+        region = self.regions.get("avg_check")
+        if not region:
+            self.runner.fail("config.regions.avg_check 坐标缺失")
+        value = self.read_number(region, price_label)
+        if value is None:
+            log.info("[%s] %s识别失败，保持常规公式", label, price_label)
+            return True
+        threshold = int(self.bid_config.get("avg_switch_threshold", 300000))
+        if value > threshold and self.state.high_i is None:
+            self.state.high_i = round_number
+            log.info("[高价] 第 %d 回合%s %d > %d，高价公式本局永久生效",
+                     round_number, price_label, value, threshold)
+        else:
+            log.info("[%s] %s %d ≤ %d，保持常规公式", label, price_label, value, threshold)
+        return True
+
     def _supreme_round(self, round_number):
         """至尊：第2回合九格均价仪器（坐标同超级鉴定仪器），第3回合至尊鉴定仪器（坐标同特殊鉴定仪器）"""
-        state = self.state
         if round_number == 2:
-            self._use_item("使用仪器", "至尊模式：使用九格均价仪器", "avg_wait", 4.0)
-            if not self._skip_or_alive():
-                return False
-            region = self.regions.get("avg_check")
-            if not region:
-                self.runner.fail("config.regions.avg_check 坐标缺失")
-            value = self.read_number(region, "九格均价")
-            if value is None:
-                log.info("[至尊] 九格均价识别失败，保持常规公式")
-                return True
-            threshold = int(self.bid_config.get("avg_switch_threshold", 300000))
-            if value > threshold and state.high_i is None:
-                state.high_i = round_number
-                log.info("[高价] 第 %d 回合九格均价 %d > %d，高价公式本局永久生效",
-                         round_number, value, threshold)
-            else:
-                log.info("[至尊] 九格均价 %d ≤ %d，保持常规公式", value, threshold)
-            return True
+            return self._avg_price_round(round_number, "使用仪器",
+                                         "至尊模式：使用九格均价仪器", "九格均价")
         self._use_item("使用特殊仪器", "至尊模式：使用至尊鉴定仪器", "item_wait", 10.0)
         return self._skip_or_alive()
 
