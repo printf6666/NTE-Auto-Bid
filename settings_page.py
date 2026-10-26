@@ -312,8 +312,8 @@ class SettingsPage(QWidget):
         self.dirty_label.setStyleSheet(f"color:{COLORS['text_faint']}; font-size:16px;")
 
     def set_capture_count(self, count, date_text=""):
-        extra = f" · {date_text}" if date_text else ""
-        self.count_label.set_text(f"今日 {count} 次采集{extra}")
+        """采集统计已移除，仅显示当前采集日期"""
+        self.count_label.set_text(f"采集日期 {date_text}" if date_text else "采集日期 未设置")
 
     def _commit(self, *_):
         """界面 → 配置（内存），由上层负责落盘"""

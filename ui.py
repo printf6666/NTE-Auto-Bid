@@ -193,7 +193,7 @@ class TaskCard(QFrame):
         outer.addLayout(self._build_footer())
 
     def _build_status_board(self):
-        """模式选择：普通 / 巨物 / 至尊 / 二格均价（四种均已实现）"""
+        """模式选择：普通 / 巨物 / 至尊（三种均已实现）"""
         board = QFrame()
         board.setObjectName("CardBody")
         board.setMinimumHeight(266)
@@ -216,10 +216,6 @@ class TaskCard(QFrame):
              "第二回合使用九格均价仪器显示九格藏品的平均价值，"
              "均价 > 30万则本局切换高价公式，"
              "第三回合使用至尊鉴定仪器展示信息完全未知且品质最高的一件藏品。", True),
-            ("avg2", "存储盘模式", "coin",
-             "第一回合使用大型鉴定仪器展示 5 件藏品，"
-             "第二回合使用二格均价仪器显示二格藏品的平均价值，"
-             "均价 > 30万则本局切换高价公式。", True),
         ]
         for key, title, icon_name, desc, enabled in specs:
             card = ModeCard(key, title, icon_name, desc, enabled)

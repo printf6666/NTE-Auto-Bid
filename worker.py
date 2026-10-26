@@ -231,8 +231,8 @@ class BotWorker(threading.Thread):
                               self._capturer, control=self.control, worker=self,
                               mode=self._mode)
             run_mode = "空跑" if self._runner.dry_run else "步进" if self._runner.step else "自动"
-            flow_mode = {"normal": "普通", "giant": "巨物", "supreme": "至尊",
-                         "avg2": "存储盘"}.get(self._mode, self._mode)
+            flow_mode = {"normal": "普通", "giant": "巨物", "supreme": "至尊"}.get(
+                self._mode, self._mode)
             self.log.info("异环自动竞拍已启动，模式: %s · %s模式", run_mode, flow_mode)
             started = True
             # 先把 boot 相位推给界面，避免启动等待期间阶段栏是空的

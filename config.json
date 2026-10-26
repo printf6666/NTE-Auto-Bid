@@ -11,7 +11,7 @@
   },
   "loop": {
     "interval": 1.0,
-    "startup_wait": 4.0,
+    "startup_wait": 3.0,
     "cooldown_wait": 18.0,
     "round_wait": 3.0,
     "item_wait": 1.0,

@@ -16,9 +16,7 @@ worker 不为空时（GUI 运行）：除日志外还会上报阶段/回合/结�
 mode：normal 普通模式 | giant 巨物模式（第2回合用特殊鉴定仪器再读一次估价，
 >512万则本局切换高价公式）| supreme 至尊模式（第2回合用九格均价仪器，坐标同超级
 鉴定仪器，用后等 avg_wait 秒在 regions.avg_check 读九格均价，严格>30万则本局切换
-高价公式；第3回合用至尊鉴定仪器，坐标同特殊鉴定仪器）| avg2 存储盘模式（第1回合
-大型鉴定仪器与第2回合二格均价仪器坐标均同超级鉴定仪器，第2回合读 avg_check 二格
-均价，严格>30万切高价公式；其余与普通模式一致）。
+高价公式；第3回合用至尊鉴定仪器，坐标同特殊鉴定仪器）。
 """
 import logging
 import random
@@ -112,19 +110,29 @@ class Flow:
                     time.sleep(delay)
         return False
 
-    def read_number(self, region, label):
-        """识别区域文本并解析为整数（带重试），label 用于日志"""
+    def read_number(self, region, label, changed_from=None):
+        """识别区域文本并解析为整数（带重试），label 用于日志。
+
+        changed_from 非空时：读到与该值相同的结果视为画面尚未变化（第3回合角色
+        技能会变更估价），继续重试直到值不同；重试用尽返回最后读到的值（回退）。
+        """
         times = int(self.loop.get("estimate_retry_times", 5))
         delay = float(self.loop.get("estimate_retry_delay", 1.0))
+        last = None
         for attempt in range(1, times + 1):
             self.checkpoint()
             image = self.capturer.grab_region(region)
             text = self.ocr.read(image)
             value = parse_estimate(text)
             if value is not None:
-                log.info("[%s] 识别 %r → %d（第 %d/%d 次）", label, text, value, attempt, times)
-                return value
-            log.info("[%s] 识别失败 %r（第 %d/%d 次）", label, text, attempt, times)
+                if changed_from is None or value != changed_from:
+                    log.info("[%s] 识别 %r → %d（第 %d/%d 次）", label, text, value, attempt, times)
+                    return value
+                last = value
+                log.info("[%s] 识别 %r → %d 与上回合相同，等变化后重读（第 %d/%d 次）",
+                         label, text, value, attempt, times)
+            else:
+                log.info("[%s] 识别失败 %r（第 %d/%d 次）", label, text, attempt, times)
             if attempt < times:
                 if self.runner.dry_run:
                     continue
@@ -132,7 +140,9 @@ class Flow:
                     self.worker.sleep(delay)
                 else:
                     time.sleep(delay)
-        return None
+        if changed_from is not None and last is not None:
+            log.info("[%s] 未见估价变化，按最后读数 %d 继续", label, last)
+        return last
 
     def read_estimate(self):
         return self.read_number(self.regions["estimate"], "估价")
@@ -241,7 +251,13 @@ class Flow:
             return
         # 第1/3/5回合读取当前估价
         if round_number in (1, 3, 5):
-            value = self.read_estimate()
+            if round_number == 3 and state.estimate is not None:
+                # 第3回合角色技能展示八件藏品、估价必定变化：读到与上回合相同的值
+                # 视为技能未生效，间隔重读直到值变化（重试间隔即等待时间）
+                value = self.read_number(self.regions["estimate"], "估价",
+                                         changed_from=state.estimate)
+            else:
+                value = self.read_estimate()
             if value is not None:
                 state.estimate = value
                 if value > bid_mod.HIGH_THRESHOLD and state.high_i is None:
@@ -263,9 +279,6 @@ class Flow:
             return self._giant_round(round_number)
         if self.mode == "supreme" and round_number in (2, 3):
             return self._supreme_round(round_number)
-        if self.mode == "avg2" and round_number == 2:
-            return self._avg_price_round(round_number, "使用仪器",
-                                         "存储盘模式：使用二格均价仪器", "二格均价")
         return True
 
     def _use_item(self, action_key, label, wait_key, wait_default):
